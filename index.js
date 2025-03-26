@@ -1,16 +1,21 @@
-const express = require('express');
-const { JWT } = require('google-auth-library');
-const axios = require('axios');
-const bodyParser = require('body-parser');
-const cors = require('cors');
+import express from 'express';
+import { JWT } from 'google-auth-library';
+import axios from 'axios';
+import bodyParser from 'body-parser';
+import cors from 'cors';
+import { readFile } from 'fs/promises';
+
+// Load service account configuration
+const serviceAccount = JSON.parse(
+  await readFile(new URL('./serviceAccountKey.json', import.meta.url))
+);
 
 // Configuration
 const PROJECT_ID = 'rn-testapp-edc89'; // Replace with your Firebase project ID
-const SERVICE_ACCOUNT_FILE = './serviceAccountKey.json'; // Path to your service account file
+const PORT = process.env.PORT || 5000;
 
 // Initialize Express
 const app = express();
-const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
@@ -22,7 +27,8 @@ const deviceTokens = new Set();
 // Helper function to get access token
 async function getAccessToken() {
   const client = new JWT({
-    keyFile: SERVICE_ACCOUNT_FILE,
+    email: serviceAccount.client_email,
+    key: serviceAccount.private_key,
     scopes: ['https://www.googleapis.com/auth/firebase.messaging'],
   });
 
@@ -57,11 +63,8 @@ app.post('/send-notification', async (req, res) => {
 
     const message = {
       message: {
-        token: token,
-        notification: {
-          title: title,
-          body: body
-        },
+        token,
+        notification: { title, body },
         data: data || {}
       }
     };
@@ -88,7 +91,7 @@ app.post('/send-notification', async (req, res) => {
 app.post('/send-multicast', async (req, res) => {
   const { tokens, title, body, data } = req.body;
 
-  if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
+  if (!tokens?.length || !Array.isArray(tokens)) {
     return res.status(400).json({ error: 'Valid tokens array is required' });
   }
 
@@ -100,15 +103,11 @@ app.post('/send-multicast', async (req, res) => {
     const accessToken = await getAccessToken();
     const fcmUrl = `https://fcm.googleapis.com/v1/projects/${PROJECT_ID}/messages:send`;
 
-    // For multicast, we need to send individual requests
-    const results = await Promise.all(tokens.map(async token => {
+    const results = await Promise.all(tokens.map(async (token) => {
       const message = {
         message: {
-          token: token,
-          notification: {
-            title: title,
-            body: body
-          },
+          token,
+          notification: { title, body },
           data: data || {}
         }
       };
@@ -122,7 +121,11 @@ app.post('/send-multicast', async (req, res) => {
         });
         return { token, success: true, response: response.data };
       } catch (error) {
-        return { token, success: false, error: error.response?.data || error.message };
+        return { 
+          token, 
+          success: false, 
+          error: error.response?.data || error.message 
+        };
       }
     }));
 
@@ -149,3 +152,5 @@ app.post('/send-multicast', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`FCM Google API Server running on port ${PORT}`);
 });
+
+export default app;
